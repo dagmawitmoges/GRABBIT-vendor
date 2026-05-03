@@ -1,5 +1,7 @@
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+
 import '../config/env.dart';
 import '../storage/secure_storage.dart';
 
@@ -70,31 +72,46 @@ class _AuthInterceptor extends Interceptor {
       _isRefreshing = true;
 
       try {
-        final refreshToken = await SecureStorage.getRefreshToken();
+        if (Env.hasSupabase) {
+          final res = await Supabase.instance.client.auth.refreshSession();
+          final session = res.session;
+          if (session == null) {
+            await SecureStorage.clearTokens();
+            handler.next(err);
+            return;
+          }
+          await SecureStorage.saveTokens(
+            accessToken: session.accessToken,
+            refreshToken: session.refreshToken ?? '',
+          );
+          err.requestOptions.headers['Authorization'] =
+              'Bearer ${session.accessToken}';
+        } else {
+          final refreshToken = await SecureStorage.getRefreshToken();
 
-        if (refreshToken == null) {
-          await SecureStorage.clearTokens();
-          handler.next(err);
-          return;
+          if (refreshToken == null || refreshToken.isEmpty) {
+            await SecureStorage.clearTokens();
+            handler.next(err);
+            return;
+          }
+
+          final response = await _dio.post(
+            '/api/auth/refresh-token',
+            data: {'refreshToken': refreshToken},
+            options: Options(headers: {'Authorization': null}),
+          );
+
+          final newAccessToken = response.data['accessToken'];
+          final newRefreshToken = response.data['refreshToken'];
+
+          await SecureStorage.saveTokens(
+            accessToken: newAccessToken,
+            refreshToken: newRefreshToken,
+          );
+
+          err.requestOptions.headers['Authorization'] =
+              'Bearer $newAccessToken';
         }
-
-        final response = await _dio.post(
-          '/api/auth/refresh-token',
-          data: {'refreshToken': refreshToken},
-          options: Options(headers: {'Authorization': null}),
-        );
-
-        final newAccessToken = response.data['accessToken'];
-        final newRefreshToken = response.data['refreshToken'];
-
-        await SecureStorage.saveTokens(
-          accessToken: newAccessToken,
-          refreshToken: newRefreshToken,
-        );
-
-        // Retry original request
-        err.requestOptions.headers['Authorization'] =
-            'Bearer $newAccessToken';
 
         final retryResponse = await _dio.fetch(err.requestOptions);
         handler.resolve(retryResponse);

@@ -1,10 +1,14 @@
-import 'dart:io';
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:image_picker/image_picker.dart';
+import 'package:grabbit_vendor_app/core/config/env.dart';
+import 'package:grabbit_vendor_app/core/data/vendor_repository.dart';
+import 'package:grabbit_vendor_app/core/theme/vendor_theme.dart';
+import 'package:grabbit_vendor_app/router/app_shell.dart';
 import 'package:grabbit_vendor_app/core/network/dio_client.dart';
-import 'package:dio/dio.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
+import 'package:supabase_flutter/supabase_flutter.dart' hide MultipartFile;
 
 class CreateDealScreen extends StatefulWidget {
   const CreateDealScreen({super.key});
@@ -25,15 +29,18 @@ class _CreateDealScreenState extends State<CreateDealScreen> {
   final quantityController = TextEditingController();
 
   // State
-  File? selectedImage;
+  XFile? selectedImage;
+  Uint8List? _imagePreviewBytes;
   String? selectedCategoryId;
   String? selectedSubcityId;
   DateTime? expiryDate;
   bool isLoading = false;
   String? imageErrorMessage;
+  bool _catalogLoading = true;
+  List<Map<String, String>> _categories = [];
+  List<Map<String, String>> _locations = [];
 
-  // Mock data - Replace with actual API calls
-  final List<Map<String, String>> categories = [
+  static const _fallbackCategories = [
     {'id': '1', 'name': 'Electronics'},
     {'id': '2', 'name': 'Fashion'},
     {'id': '3', 'name': 'Food & Beverage'},
@@ -41,13 +48,66 @@ class _CreateDealScreenState extends State<CreateDealScreen> {
     {'id': '5', 'name': 'Beauty'},
   ];
 
-  final List<Map<String, String>> subcities = [
+  static const _fallbackLocations = [
     {'id': '1', 'name': 'Addis Ketema'},
     {'id': '2', 'name': 'Arada'},
     {'id': '3', 'name': 'Bole'},
     {'id': '4', 'name': 'Kolfe Keranio'},
     {'id': '5', 'name': 'Kirkos'},
   ];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCatalog();
+  }
+
+  Future<void> _loadCatalog() async {
+    if (!Env.hasSupabase) {
+      setState(() {
+        _categories = List<Map<String, String>>.from(_fallbackCategories);
+        _locations = List<Map<String, String>>.from(_fallbackLocations);
+        _catalogLoading = false;
+      });
+      return;
+    }
+    try {
+      final repo = VendorRepository();
+      final c = await repo.getCategories();
+      final l = await repo.getLocations();
+      if (!mounted) return;
+      setState(() {
+        _categories = c
+            .map((e) => {
+                  'id': e['id'].toString(),
+                  'name': e['name']?.toString() ?? '',
+                })
+            .toList();
+        _locations = l.map((e) {
+          final sub = e['sub_city']?.toString().trim();
+          final city = e['city']?.toString().trim();
+          final parts = <String>[];
+          if (sub != null && sub.isNotEmpty) parts.add(sub);
+          if (city != null && city.isNotEmpty) parts.add(city);
+          final label =
+              parts.isEmpty ? (city ?? 'Location') : parts.join(', ');
+          return {
+            'id': e['id'].toString(),
+            'name': label,
+          };
+        }).toList();
+        _catalogLoading = false;
+      });
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _categories = List<Map<String, String>>.from(_fallbackCategories);
+          _locations = List<Map<String, String>>.from(_fallbackLocations);
+          _catalogLoading = false;
+        });
+      }
+    }
+  }
 
   /// 🔹 Check if image picker is available
   Future<bool> _isImagePickerAvailable() async {
@@ -82,30 +142,21 @@ class _CreateDealScreenState extends State<CreateDealScreen> {
       );
 
       if (picked != null) {
-        final file = File(picked.path);
-        
-        // Check if file exists
-        if (!await file.exists()) {
-          setState(() {
-            imageErrorMessage = "Selected file no longer exists";
-            selectedImage = null;
-          });
-          return;
-        }
-
-        final fileSize = await file.length();
-        
-        // Validate file size (max 5MB)
+        final fileSize = await picked.length();
         if (fileSize > 5 * 1024 * 1024) {
           setState(() {
-            imageErrorMessage = "Image size must be less than 5MB (current: ${(fileSize / 1024 / 1024).toStringAsFixed(2)}MB)";
+            imageErrorMessage =
+                "Image size must be less than 5MB (current: ${(fileSize / 1024 / 1024).toStringAsFixed(2)}MB)";
             selectedImage = null;
+            _imagePreviewBytes = null;
           });
           return;
         }
 
+        final bytes = await picked.readAsBytes();
         setState(() {
-          selectedImage = file;
+          selectedImage = picked;
+          _imagePreviewBytes = bytes;
           imageErrorMessage = null;
         });
 
@@ -145,18 +196,19 @@ class _CreateDealScreenState extends State<CreateDealScreen> {
       );
 
       if (picked != null) {
-        final file = File(picked.path);
-        
-        if (!await file.exists()) {
+        final fileSize = await picked.length();
+        if (fileSize > 5 * 1024 * 1024) {
           setState(() {
-            imageErrorMessage = "Captured image could not be saved";
+            imageErrorMessage = 'Image too large (max 5MB)';
             selectedImage = null;
+            _imagePreviewBytes = null;
           });
           return;
         }
-
+        final bytes = await picked.readAsBytes();
         setState(() {
-          selectedImage = file;
+          selectedImage = picked;
+          _imagePreviewBytes = bytes;
           imageErrorMessage = null;
         });
 
@@ -230,6 +282,7 @@ class _CreateDealScreenState extends State<CreateDealScreen> {
   void _showErrorDialog(String title, String message) {
     showDialog(
       context: context,
+      useRootNavigator: true,
       builder: (context) => AlertDialog(
         title: Text(title),
         content: Text(message),
@@ -247,6 +300,8 @@ class _CreateDealScreenState extends State<CreateDealScreen> {
   void _showImagePickerOptions() {
     showModalBottomSheet(
       context: context,
+      useRootNavigator: true,
+      showDragHandle: true,
       builder: (context) => Container(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
         child: Column(
@@ -258,7 +313,7 @@ class _CreateDealScreenState extends State<CreateDealScreen> {
             ),
             const SizedBox(height: 20),
             ListTile(
-              leading: const Icon(Icons.photo_library, color: Colors.blue),
+              leading: Icon(Icons.photo_library, color: VendorTheme.forest),
               title: const Text('Gallery'),
               onTap: () {
                 Navigator.pop(context);
@@ -266,7 +321,7 @@ class _CreateDealScreenState extends State<CreateDealScreen> {
               },
             ),
             ListTile(
-              leading: const Icon(Icons.camera_alt, color: Colors.blue),
+              leading: Icon(Icons.camera_alt, color: VendorTheme.forest),
               title: const Text('Camera'),
               onTap: () {
                 Navigator.pop(context);
@@ -281,6 +336,7 @@ class _CreateDealScreenState extends State<CreateDealScreen> {
                   Navigator.pop(context);
                   setState(() {
                     selectedImage = null;
+                    _imagePreviewBytes = null;
                     imageErrorMessage = null;
                   });
                 },
@@ -323,7 +379,14 @@ class _CreateDealScreenState extends State<CreateDealScreen> {
 
     if (selectedSubcityId == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Please select a subcity")),
+        const SnackBar(content: Text("Please select a location")),
+      );
+      return;
+    }
+
+    if (_catalogLoading) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Still loading categories — try again.')),
       );
       return;
     }
@@ -351,13 +414,13 @@ class _CreateDealScreenState extends State<CreateDealScreen> {
     setState(() => isLoading = true);
 
     try {
-      // Verify image still exists before uploading
-      final imageExists = await selectedImage!.exists();
-      if (!imageExists) {
+      final imageBytes =
+          _imagePreviewBytes ?? await selectedImage!.readAsBytes();
+      if (imageBytes.isEmpty) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text("Selected image no longer exists. Please select again."),
+              content: Text('Could not read image. Please select again.'),
               backgroundColor: Colors.orange,
             ),
           );
@@ -366,38 +429,81 @@ class _CreateDealScreenState extends State<CreateDealScreen> {
         return;
       }
 
-      final formData = FormData.fromMap({
-        "title": titleController.text.trim(),
-        "description": descController.text.trim(),
-        "original_price": int.parse(originalPriceController.text),
-        "discount_price": int.parse(discountPriceController.text),
-        "quantity_available": int.parse(quantityController.text),
-        "total_quantity": int.parse(quantityController.text),
-        "category_id": selectedCategoryId,
-        "subcity_id": selectedSubcityId,
-        "expiry_date": expiryDate!.toIso8601String(),
-        "image": await MultipartFile.fromFile(
-          selectedImage!.path,
-          filename: "${DateTime.now().millisecondsSinceEpoch}.jpg",
-        ),
-      });
+      final title = titleController.text.trim();
+      final description = descController.text.trim();
+      final originalPrice = num.parse(originalPriceController.text);
+      final discountedPrice = num.parse(discountPriceController.text);
+      final quantity = int.parse(quantityController.text);
+      final categoryId = selectedCategoryId!;
+      final locationId = selectedSubcityId!;
+      final expiry = expiryDate!;
+      final fileName = selectedImage!.name.isNotEmpty
+          ? selectedImage!.name
+          : '${DateTime.now().millisecondsSinceEpoch}.jpg';
 
-      await DioClient.instance.post(
-        '/api/deals',
-        data: formData,
-      );
+      if (Env.hasSupabase) {
+        await VendorRepository().createDeal(
+          title: title,
+          description: description,
+          originalPrice: originalPrice,
+          discountedPrice: discountedPrice,
+          quantity: quantity,
+          categoryId: categoryId,
+          locationId: locationId,
+          expiryTime: expiry,
+          imageBytes: imageBytes,
+          imageFileName: fileName,
+        );
+      } else {
+        final formData = FormData.fromMap({
+          'title': title,
+          'description': description,
+          'original_price': originalPrice,
+          'discount_price': discountedPrice,
+          'quantity_available': quantity,
+          'total_quantity': quantity,
+          'category_id': categoryId,
+          'subcity_id': locationId,
+          'expiry_date': expiry.toIso8601String(),
+          'image': MultipartFile.fromBytes(
+            imageBytes,
+            filename: fileName,
+          ),
+        });
+        await DioClient.instance.post('/api/deals', data: formData);
+      }
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text("✨ Deal created successfully!"),
-            backgroundColor: Colors.green,
-            duration: Duration(seconds: 2),
+          SnackBar(
+            content: const Text('✨ Deal created successfully!'),
+            backgroundColor: VendorTheme.forest,
+            duration: const Duration(seconds: 2),
           ),
         );
         Future.delayed(const Duration(milliseconds: 500), () {
           if (mounted) Navigator.pop(context);
         });
+      }
+    } on PostgrestException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(e.message),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } on StorageException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Storage error: ${e.message}. Create bucket "${Env.supabaseDealImagesBucket}" and policies.',
+            ),
+            backgroundColor: Colors.red,
+          ),
+        );
       }
     } on DioException catch (e) {
       String errorMessage = "Failed to create deal";
@@ -441,7 +547,7 @@ class _CreateDealScreenState extends State<CreateDealScreen> {
         return Theme(
           data: Theme.of(context).copyWith(
             colorScheme: ColorScheme.light(
-              primary: Colors.blue.shade700,
+              primary: VendorTheme.forest,
               onPrimary: Colors.white,
               surface: Colors.white,
             ),
@@ -481,14 +587,16 @@ class _CreateDealScreenState extends State<CreateDealScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final bottomPad = appShellBodyBottomPadding(context);
+
     return Scaffold(
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(
         title: const Text('Create New Deal'),
-        elevation: 0,
-        backgroundColor: Colors.blue.shade700,
-        foregroundColor: Colors.white,
       ),
       body: SingleChildScrollView(
+        padding: EdgeInsets.only(bottom: bottomPad),
         child: Column(
           children: [
             // Header section with gradient
@@ -496,7 +604,7 @@ class _CreateDealScreenState extends State<CreateDealScreen> {
               padding: const EdgeInsets.all(20),
               decoration: BoxDecoration(
                 gradient: LinearGradient(
-                  colors: [Colors.blue.shade700, Colors.blue.shade500],
+                  colors: [scheme.primary, VendorTheme.forestLight],
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
                 ),
@@ -524,11 +632,16 @@ class _CreateDealScreenState extends State<CreateDealScreen> {
             // Form content
             Padding(
               padding: const EdgeInsets.all(20),
-              child: Form(
+                child: Form(
                 key: _formKey,
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    if (_catalogLoading)
+                      const Padding(
+                        padding: EdgeInsets.only(bottom: 16),
+                        child: LinearProgressIndicator(),
+                      ),
                     // 🔥 IMAGE PICKER SECTION
                     _buildImagePickerSection(),
                     const SizedBox(height: 28),
@@ -566,7 +679,7 @@ class _CreateDealScreenState extends State<CreateDealScreen> {
                     _buildDropdown(
                       label: 'Category',
                       value: selectedCategoryId,
-                      items: categories,
+                      items: _categories,
                       onChanged: (value) {
                         setState(() => selectedCategoryId = value);
                       },
@@ -576,9 +689,9 @@ class _CreateDealScreenState extends State<CreateDealScreen> {
 
                     // SUBCITY DROPDOWN
                     _buildDropdown(
-                      label: 'Subcity',
+                      label: 'Location',
                       value: selectedSubcityId,
-                      items: subcities,
+                      items: _locations,
                       onChanged: (value) {
                         setState(() => selectedSubcityId = value);
                       },
@@ -647,14 +760,16 @@ class _CreateDealScreenState extends State<CreateDealScreen> {
                           vertical: 8,
                         ),
                         decoration: BoxDecoration(
-                          color: Colors.green.shade100,
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(color: Colors.green.shade300),
+                          color: VendorTheme.limeMuted,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: VendorTheme.lime.withValues(alpha: 0.5),
+                          ),
                         ),
                         child: Text(
                           'Discount: ${getDiscountPercentage()} off',
                           style: TextStyle(
-                            color: Colors.green.shade700,
+                            color: VendorTheme.forest,
                             fontWeight: FontWeight.bold,
                             fontSize: 12,
                           ),
@@ -695,15 +810,14 @@ class _CreateDealScreenState extends State<CreateDealScreen> {
                     SizedBox(
                       width: double.infinity,
                       height: 56,
-                      child: ElevatedButton(
+                      child: FilledButton(
                         onPressed: isLoading ? null : createDeal,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.blue.shade700,
-                          disabledBackgroundColor: Colors.grey[300],
+                        style: FilledButton.styleFrom(
+                          backgroundColor: scheme.primary,
+                          disabledBackgroundColor: Colors.grey.shade300,
                           shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
+                            borderRadius: BorderRadius.circular(16),
                           ),
-                          elevation: 4,
                         ),
                         child: isLoading
                             ? const SizedBox(
@@ -758,13 +872,19 @@ class _CreateDealScreenState extends State<CreateDealScreen> {
               borderRadius: BorderRadius.circular(16),
               border: Border.all(
                 color: selectedImage == null
-                    ? Colors.blue.shade300
-                    : Colors.green.shade300,
+                    ? Theme.of(context)
+                        .colorScheme
+                        .primary
+                        .withValues(alpha: 0.35)
+                    : VendorTheme.lime.withValues(alpha: 0.8),
                 width: 2,
               ),
               color: selectedImage == null
-                  ? Colors.blue.shade50
-                  : Colors.green.shade50,
+                  ? Theme.of(context)
+                      .colorScheme
+                      .primary
+                      .withValues(alpha: 0.06)
+                  : VendorTheme.limeMuted,
             ),
             child: selectedImage == null
                 ? Column(
@@ -773,7 +893,7 @@ class _CreateDealScreenState extends State<CreateDealScreen> {
                       Icon(
                         Icons.cloud_upload_outlined,
                         size: 48,
-                        color: Colors.blue.shade700,
+                        color: VendorTheme.forest,
                       ),
                       const SizedBox(height: 12),
                       Text(
@@ -781,7 +901,7 @@ class _CreateDealScreenState extends State<CreateDealScreen> {
                         style: TextStyle(
                           fontSize: 14,
                           fontWeight: FontWeight.w600,
-                          color: Colors.blue.shade700,
+                          color: VendorTheme.forest,
                         ),
                       ),
                       const SizedBox(height: 4),
@@ -798,12 +918,14 @@ class _CreateDealScreenState extends State<CreateDealScreen> {
                     children: [
                       ClipRRect(
                         borderRadius: BorderRadius.circular(14),
-                        child: Image.file(
-                          selectedImage!,
-                          fit: BoxFit.cover,
-                          width: double.infinity,
-                          height: double.infinity,
-                        ),
+                        child: _imagePreviewBytes != null
+                            ? Image.memory(
+                                _imagePreviewBytes!,
+                                fit: BoxFit.cover,
+                                width: double.infinity,
+                                height: double.infinity,
+                              )
+                            : const SizedBox.expand(),
                       ),
                       Positioned(
                         top: 8,
@@ -813,7 +935,7 @@ class _CreateDealScreenState extends State<CreateDealScreen> {
                           child: Container(
                             padding: const EdgeInsets.all(8),
                             decoration: BoxDecoration(
-                              color: Colors.blue.shade700,
+                              color: VendorTheme.forest,
                               shape: BoxShape.circle,
                             ),
                             child: const Icon(
@@ -889,7 +1011,7 @@ class _CreateDealScreenState extends State<CreateDealScreen> {
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide(color: Colors.blue.shade700, width: 2),
+          borderSide: const BorderSide(color: VendorTheme.forest, width: 2),
         ),
         errorBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
@@ -941,7 +1063,7 @@ class _CreateDealScreenState extends State<CreateDealScreen> {
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide(color: Colors.blue.shade700, width: 2),
+          borderSide: const BorderSide(color: VendorTheme.forest, width: 2),
         ),
         filled: true,
         fillColor: Colors.grey.shade50,
@@ -971,7 +1093,7 @@ class _CreateDealScreenState extends State<CreateDealScreen> {
           children: [
             Icon(
               Icons.calendar_today,
-              color: Colors.blue.shade700,
+              color: VendorTheme.forest,
               size: 20,
             ),
             const SizedBox(width: 12),

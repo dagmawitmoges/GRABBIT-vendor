@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import '../provider/auth_provider.dart';
+import 'package:grabbit_vendor_app/core/auth/login_identifier.dart';
+import 'package:grabbit_vendor_app/core/theme/vendor_theme.dart';
+import 'package:grabbit_vendor_app/core/widgets/grabbit_logo.dart';
 
-const _green = Color(0xFF1DB954);
-const _greenDark = Color(0xFF158A3E);
-const _bg = Color(0xFFF5F8F5);
+import '../provider/auth_provider.dart';
 
 class LoginScreen extends ConsumerStatefulWidget {
   const LoginScreen({super.key});
@@ -16,13 +16,13 @@ class LoginScreen extends ConsumerStatefulWidget {
 
 class _LoginScreenState extends ConsumerState<LoginScreen> {
   final _formKey = GlobalKey<FormState>();
-  final _emailController = TextEditingController();
+  final _identifierController = TextEditingController();
   final _passwordController = TextEditingController();
   bool _obscurePassword = true;
 
   @override
   void dispose() {
-    _emailController.dispose();
+    _identifierController.dispose();
     _passwordController.dispose();
     super.dispose();
   }
@@ -32,119 +32,157 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     try {
       await ref
           .read(authProvider.notifier)
-          .login(_emailController.text, _passwordController.text);
+          .login(_identifierController.text, _passwordController.text);
       if (!mounted) return;
       context.go('/home');
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(error.toString()), backgroundColor: Colors.redAccent),
+        SnackBar(
+          content: Text(error.toString()),
+          backgroundColor: Theme.of(context).colorScheme.error,
+        ),
       );
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     final isLoading = ref.watch(authProvider).isLoading;
 
     return Scaffold(
-      backgroundColor: _bg,
-      body: Center(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 40),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // Logo badge
-              Container(
-                padding: const EdgeInsets.all(18),
-                decoration: BoxDecoration(
-                  color: _green,
-                  shape: BoxShape.circle,
-                  boxShadow: [
-                    BoxShadow(color: _green.withOpacity(0.35), blurRadius: 20, offset: const Offset(0, 8)),
-                  ],
-                ),
-                child: const Icon(Icons.storefront_rounded, size: 36, color: Colors.white),
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+      body: Stack(
+        children: [
+          Positioned(
+            top: -80,
+            right: -60,
+            child: Container(
+              width: 220,
+              height: 220,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: VendorTheme.lime.withValues(alpha: 0.35),
               ),
-              const SizedBox(height: 20),
-              const Text(
-                'Grabbit Vendor',
-                style: TextStyle(fontSize: 26, fontWeight: FontWeight.w800, color: Color(0xFF0F1F0F), letterSpacing: -0.5),
-              ),
-              const SizedBox(height: 6),
-              const Text(
-                'Sign in to manage deals, orders & customers',
-                textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 13.5, color: Color(0xFF6B7C6B)),
-              ),
-              const SizedBox(height: 32),
-              // Card
-              Container(
-                padding: const EdgeInsets.all(24),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(20),
-                  boxShadow: [
-                    BoxShadow(color: Colors.black.withOpacity(0.07), blurRadius: 24, offset: const Offset(0, 8)),
-                  ],
-                ),
-                child: Form(
-                  key: _formKey,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      _Field(
-                        controller: _emailController,
-                        label: 'Email',
-                        hint: 'vendor@example.com',
-                        keyboardType: TextInputType.emailAddress,
-                        validator: (v) {
-                          if (v == null || v.trim().isEmpty) return 'Enter your email.';
-                          if (!v.contains('@')) return 'Enter a valid email.';
-                          return null;
-                        },
-                      ),
-                      const SizedBox(height: 16),
-                      _Field(
-                        controller: _passwordController,
-                        label: 'Password',
-                        hint: '••••••••',
-                        obscureText: _obscurePassword,
-                        suffixIcon: IconButton(
-                          icon: Icon(_obscurePassword ? Icons.visibility_off_outlined : Icons.visibility_outlined, size: 20, color: Colors.grey),
-                          onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
-                        ),
-                        validator: (v) {
-                          if (v == null || v.isEmpty) return 'Enter your password.';
-                          if (v.length < 6) return 'Minimum 6 characters.';
-                          return null;
-                        },
-                      ),
-                      const SizedBox(height: 24),
-                      SizedBox(
-                        height: 50,
-                        child: ElevatedButton(
-                          onPressed: isLoading ? null : _submit,
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: _green,
-                            disabledBackgroundColor: _green.withOpacity(0.6),
-                            foregroundColor: Colors.white,
-                            elevation: 0,
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                          ),
-                          child: isLoading
-                              ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white))
-                              : const Text('Sign In', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ],
+            ),
           ),
-        ),
+          Positioned(
+            bottom: 40,
+            left: -40,
+            child: Container(
+              width: 160,
+              height: 160,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: scheme.primary.withValues(alpha: 0.08),
+              ),
+            ),
+          ),
+          Center(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 40),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  GrabbitLogo(
+                    height: 56,
+                    color: scheme.onSurface,
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    'Vendor',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 1.2,
+                          color: scheme.onSurfaceVariant,
+                        ),
+                  ),
+                  const SizedBox(height: 20),
+                  Text(
+                    'Sign in to manage deals, orders & customers',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color: scheme.onSurfaceVariant,
+                          height: 1.4,
+                        ),
+                  ),
+                  const SizedBox(height: 36),
+                  Container(
+                    padding: const EdgeInsets.all(26),
+                    decoration: BoxDecoration(
+                      color: scheme.surface,
+                      borderRadius: BorderRadius.circular(26),
+                      boxShadow: VendorTheme.cardShadowFor(context),
+                    ),
+                    child: Form(
+                      key: _formKey,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          _Field(
+                            controller: _identifierController,
+                            label: 'Email or phone',
+                            hint: 'vendor@example.com or +15551234567',
+                            keyboardType: TextInputType.text,
+                            validator: LoginIdentifier.validationError,
+                          ),
+                          const SizedBox(height: 18),
+                          _Field(
+                            controller: _passwordController,
+                            label: 'Password',
+                            hint: '••••••••',
+                            obscureText: _obscurePassword,
+                            suffixIcon: IconButton(
+                              icon: Icon(
+                                _obscurePassword
+                                    ? Icons.visibility_off_outlined
+                                    : Icons.visibility_outlined,
+                                size: 22,
+                                color: scheme.onSurfaceVariant,
+                              ),
+                              onPressed: () => setState(
+                                  () => _obscurePassword = !_obscurePassword),
+                            ),
+                            validator: (v) {
+                              if (v == null || v.isEmpty) {
+                                return 'Enter your password.';
+                              }
+                              if (v.length < 6) return 'Minimum 6 characters.';
+                              return null;
+                            },
+                          ),
+                          const SizedBox(height: 28),
+                          SizedBox(
+                            height: 54,
+                            child: FilledButton(
+                              onPressed: isLoading ? null : _submit,
+                              style: FilledButton.styleFrom(
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(16),
+                                ),
+                              ),
+                              child: isLoading
+                                  ? const SizedBox(
+                                      height: 22,
+                                      width: 22,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2.5,
+                                        color: Colors.white,
+                                      ),
+                                    )
+                                  : const Text('Sign In'),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -170,25 +208,19 @@ class _Field extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     return TextFormField(
       controller: controller,
       keyboardType: keyboardType,
       obscureText: obscureText,
-      style: const TextStyle(fontSize: 14.5, color: Color(0xFF0F1F0F)),
+      style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+            color: scheme.onSurface,
+            fontWeight: FontWeight.w500,
+          ),
       decoration: InputDecoration(
         labelText: label,
         hintText: hint,
         suffixIcon: suffixIcon,
-        labelStyle: const TextStyle(color: Color(0xFF6B7C6B), fontSize: 13.5),
-        hintStyle: TextStyle(color: Colors.grey.shade400),
-        filled: true,
-        fillColor: const Color(0xFFF5F8F5),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide(color: Colors.grey.shade200)),
-        enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide(color: Colors.grey.shade200)),
-        focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: _green, width: 1.5)),
-        errorBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: Colors.redAccent)),
-        focusedErrorBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: Colors.redAccent, width: 1.5)),
       ),
       validator: validator,
     );
